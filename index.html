@@ -83,7 +83,7 @@
     <h1>Imran's World</h1>
     <p>Build • Walk around • Collect stars • Say hi to your family 💛</p>
     <button id="playBtn">▶ Play</button>
-    <div id="ver">v2</div>
+    <div id="ver">v3</div>
   </div>
 
   <button id="buildBtn" class="corner active" aria-label="Build">🔨</button>
@@ -167,7 +167,10 @@ scene.fog = new THREE.Fog(0x7ec8ff, 32, 80);
 
 const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 220);
 const target = new THREE.Vector3(0, 0.6, 0);
-let theta = Math.PI * 0.5, phi = Math.PI * 0.34, radius = 16;
+let theta = Math.PI * 0.5, phi = Math.PI * 0.40, radius = 15;
+// third-person follow camera (walk mode)
+let wYaw = 0, wDist = 6.5, wHeight = 3.2;
+const camTmp = new THREE.Vector3();
 function applyCamera() {
   phi = Math.max(0.18, Math.min(Math.PI * 0.49, phi));
   radius = Math.max(6, Math.min(42, radius));
@@ -176,6 +179,18 @@ function applyCamera() {
     target.y + radius * Math.cos(phi),
     target.z + radius * Math.sin(phi) * Math.sin(theta));
   camera.lookAt(target);
+}
+// third-person follow camera: sits behind Imran and trails him as he walks
+function lerpAngle(a, b, t) { const d = Math.atan2(Math.sin(b - a), Math.cos(b - a)); return a + d * t; }
+function updateWalkCamera(dt) {
+  const p = player.group.position;
+  if (player.target) {                              // trail behind Imran while he walks
+    const desired = player.group.rotation.y + Math.PI;
+    wYaw = lerpAngle(wYaw, desired, Math.min(1, dt * 2.2));
+  }
+  camTmp.set(p.x + Math.sin(wYaw) * wDist, p.y + wHeight, p.z + Math.cos(wYaw) * wDist);
+  camera.position.lerp(camTmp, Math.min(1, dt * 6));
+  camera.lookAt(p.x, p.y + 1.15, p.z);
 }
 
 // ---- lights -----------------------------------------------
@@ -641,13 +656,13 @@ function updateStamps(dt, t) {
 //  INPUT (tap vs drag vs pinch)
 // ===========================================================
 const pointers = new Map();
-let downPos = null, downTime = 0, moved = false, pinchStart = 0, pinchRadius = 0;
+let downPos = null, downTime = 0, moved = false, pinchStart = 0, pinchRadius = 0, pinchWDist = 0;
 canvas.addEventListener('pointerdown', (e) => {
   ensureAudio(); canvas.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (pointers.size === 1) { downPos = { x: e.clientX, y: e.clientY }; downTime = performance.now(); moved = false; }
   else if (pointers.size === 2) {
-    const [a, b] = [...pointers.values()]; pinchStart = Math.hypot(a.x - b.x, a.y - b.y); pinchRadius = radius;
+    const [a, b] = [...pointers.values()]; pinchStart = Math.hypot(a.x - b.x, a.y - b.y); pinchRadius = radius; pinchWDist = wDist;
   }
   fadeHint();
 });
@@ -657,11 +672,19 @@ canvas.addEventListener('pointermove', (e) => {
   if (pointers.size === 2) {
     pointers.set(e.pointerId, { x: px, y: py });
     const [a, b] = [...pointers.values()]; const dist = Math.hypot(a.x - b.x, a.y - b.y);
-    if (pinchStart > 0) { radius = pinchRadius * (pinchStart / dist); applyCamera(); }
+    if (pinchStart > 0) {
+      if (mode === 'walk') wDist = Math.max(3.5, Math.min(12, pinchWDist * (pinchStart / dist)));
+      else { radius = pinchRadius * (pinchStart / dist); applyCamera(); }
+    }
     moved = true; return;
   }
   if (Math.abs(px - downPos.x) + Math.abs(py - downPos.y) > 8) moved = true;
-  theta -= (px - p.x) * 0.008; phi -= (py - p.y) * 0.008; applyCamera();
+  if (mode === 'walk') {                              // orbit the follow-cam around Imran
+    wYaw -= (px - p.x) * 0.008;
+    wHeight = Math.max(1.4, Math.min(7, wHeight + (py - p.y) * 0.02));
+  } else {
+    theta -= (px - p.x) * 0.008; phi -= (py - p.y) * 0.008; applyCamera();
+  }
   pointers.set(e.pointerId, { x: px, y: py });
 });
 function endPointer(e) {
@@ -760,6 +783,7 @@ const walkBtn = document.getElementById('walkBtn');
 const hintEl = document.getElementById('hint');
 function setMode(m) {
   mode = m;
+  if (m === 'walk') wYaw = player.group.rotation.y + Math.PI;   // start camera behind Imran
   buildBtn.classList.toggle('active', m === 'build');
   walkBtn.classList.toggle('active', m === 'walk');
   bar.classList.toggle('gone', m !== 'build');
@@ -867,17 +891,15 @@ function loop(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now; const t = now / 1000;
   updatePops(dt); updateFamily(dt, t); updatePlayer(dt, now); updatePet(dt);
   updateStamps(dt, t); updateStars(dt); updateFloaties(dt);
-  const want = mode === 'walk'
-    ? tmp.set(player.group.position.x, 0.7, player.group.position.z)
-    : tmp.set(0, 0.6, 0);
-  target.lerp(want, 0.08); applyCamera();
+  if (mode === 'walk') updateWalkCamera(dt);
+  else { target.lerp(tmp.set(0, 0.6, 0), 0.08); applyCamera(); }
   renderer.render(scene, camera); requestAnimationFrame(loop);
 }
 
 // ---- go ----
 resize(); applyCamera(); load(); setMode('build');
 requestAnimationFrame(loop);
-document.getElementById('ver').textContent = 'v2 ✓ ready';
+document.getElementById('ver').textContent = 'v3 ✓ ready';
 </script>
 </body>
 </html>
